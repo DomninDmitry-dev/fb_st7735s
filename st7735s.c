@@ -31,7 +31,8 @@
 #define ST7735S_HEIGHT		160
 #define ST7735S_XSTART		0
 #define ST7735S_YSTART		0
-#define ST7735S_ROTATION	(ST7735S_MADCTL_MX | ST7735S_MADCTL_MY | ST7735S_MADCTL_RGB)
+#define ST7735S_ROTATION	(ST7735S_MADCTL_MX | ST7735S_MADCTL_MY |
+						ST7735S_MADCTL_RGB)
 */
 
 // 1.44" display, default orientation
@@ -40,7 +41,8 @@
 #define ST7735S_HEIGHT		128
 #define ST7735S_XSTART		2
 #define ST7735S_YSTART		3
-#define ST7735S_ROTATION	(ST7735S_MADCTL_MY | ST7735S_MADCTL_MX | ST7735S_MADCTL_BGR)
+#define ST7735S_ROTATION	(ST7735S_MADCTL_MY | ST7735S_MADCTL_MX | \
+						ST7735S_MADCTL_BGR)
 
 // Commands
 #define ST7735S_SWRESET		0x01 // SoftWare Reset
@@ -71,8 +73,10 @@
 
 #define ST7735S_DEVICE_NAME "st7735s"
 
-#define SPI_SPEED_HZ 4000000
-#define REFRESHRATE 15
+#define SPI_SPEED_HZ	4000000
+#define REFRESHRATE	15
+#define MAX_PALETTE	16
+#define BPP	16
 
 static u_int refreshrate = REFRESHRATE;
 module_param(refreshrate, uint, 0);
@@ -164,9 +168,10 @@ struct st7735s {
 	struct gpio_desc *gpiod_reset;
 	struct gpio_desc *gpiod_a0;
 	struct fb_info *lcd_info;
-	u32 pseudo_palette[16];
+	struct mutex io_lock;
 	u32 height;
 	u32 width;
+	u16 *ssbuf;
 };
 
 static void st7735s_reset(struct st7735s *lcd)
@@ -235,47 +240,45 @@ static void st7735s_set_address_window(struct st7735s *lcd, u8 x0, u8 y0,
 
 static void st7735s_update_screen(struct st7735s *lcd)
 {
-	st7735s_write_data(lcd, (u8 *)lcd->lcd_info->screen_base,
-		ST7735S_WIDTH * ST7735S_HEIGHT * 2);
+	u16 *vmem;
+	int i;
+
+	//vmem = (u16 *)lcd->lcd_info->screen_base;
+
+	u16 *vmem16 = (u16 *)lcd->lcd_info->screen_base;
+	vmem = lcd->ssbuf;
+
+	for (i = 0; i < ST7735S_WIDTH * ST7735S_HEIGHT * BPP / 8 / 2; i++)
+		vmem[i] = swab16(vmem16[i]);
+
+	mutex_lock(&(lcd->io_lock));
+
+	/* Set row/column data window */
+	st7735s_set_address_window(lcd, 0, 0, ST7735S_WIDTH - 1,
+						ST7735S_HEIGHT - 1);
+
+	/* Blast framebuffer to ST7735 internal display RAM */
+	st7735s_write_data(lcd, (u8 *)vmem,
+		ST7735S_WIDTH * ST7735S_HEIGHT * BPP / 8);
+
+	mutex_unlock(&(lcd->io_lock));
 }
 
 static void st7735s_load_image(struct st7735s *lcd, const u8 *image)
 {
-	memcpy(lcd->lcd_info->screen_base, image, ST7735S_WIDTH * ST7735S_HEIGHT * 2);
+	u16 *vmem;
+	int i;
+
+	u16 *vmem16 = (u16 *)image;
+	vmem = lcd->ssbuf;
+
+	for (i = 0; i < ST7735S_WIDTH * ST7735S_HEIGHT * BPP / 8 / 2; i++)
+		vmem[i] = swab16(vmem16[i]);
+
+	memcpy(lcd->lcd_info->screen_base, (u8 *)vmem, ST7735S_WIDTH *
+		ST7735S_HEIGHT * BPP / 8);
 	st7735s_update_screen(lcd);
 }
-
-/*static void st7735s_fill_rectangle(struct st7735s *lcd, u16 x, u16 y, u16 w, u16 h,
-						u16 color)
-{
-	u16 i = 0;
-	u16 j = 0;
-
-	if ((x >= ST7735S_WIDTH) || (y >= ST7735S_HEIGHT))
-		return;
-
-	if ((x + w - 1) > ST7735S_WIDTH)
-		w = ST7735S_WIDTH - x;
-
-	if ((y + h - 1) > ST7735S_HEIGHT)
-		h = ST7735S_HEIGHT - y;
-
-	for (j = 0; j < h; ++j) {
-		for (i = 0; i < w; ++i) {
-			lcd->frame_buffer[(x + ST7735S_WIDTH * y) +
-		(i + ST7735S_WIDTH * j)] = (color >> 8) | (color << 8);
-		}
-	}
-
-	st7735s_update_screen(lcd);
-}*/
-
-/*static void update_display_work(struct work_struct *work)
-{
-	struct st7735s *lcd = container_of(work, struct st7735s, display_update_ws);
-
-	st7735s_update_screen(lcd);
-}*/
 
 static ssize_t st7735sfb_write(struct fb_info *info, const char __user *buf,
 		size_t count, loff_t *ppos)
@@ -312,10 +315,20 @@ static int st7735sfb_blank(int blank_mode, struct fb_info *info)
 {
 	struct st7735s *lcd = info->par;
 
-	if (blank_mode != FB_BLANK_UNBLANK)
+	// dev_info(info->dev, "%s(blank=%d)\n",
+	// 	__func__, blank_mode);
+
+	switch (blank_mode) {
+	case FB_BLANK_POWERDOWN:
+	case FB_BLANK_VSYNC_SUSPEND:
+	case FB_BLANK_HSYNC_SUSPEND:
+	case FB_BLANK_NORMAL:
 		st7735s_write_command(lcd, ST7735S_DISPOFF);
-	else
+		break;
+	case FB_BLANK_UNBLANK:
 		st7735s_write_command(lcd, ST7735S_DISPON);
+		break;
+	}
 
 	return 0;
 }
@@ -324,6 +337,10 @@ static void st7735sfb_fillrect(struct fb_info *info,
 			const struct fb_fillrect *rect)
 {
 	struct fb_deferred_io *fbdefio = info->fbdefio;
+
+	// dev_info(info->dev,
+	// 	"%s: dx=%d, dy=%d, width=%d, height=%d\n",
+	// 	__func__, rect->dx, rect->dy, rect->width, rect->height);
 
 	sys_fillrect(info, rect);
 	schedule_delayed_work(&info->deferred_work, fbdefio->delay);
@@ -334,6 +351,10 @@ static void st7735sfb_copyarea(struct fb_info *info,
 {
 	struct fb_deferred_io *fbdefio = info->fbdefio;
 
+	// dev_info(info->dev,
+	// 	"%s: dx=%d, dy=%d, width=%d, height=%d\n",
+	// 	__func__,  area->dx, area->dy, area->width, area->height);
+
 	sys_copyarea(info, area);
 	schedule_delayed_work(&info->deferred_work, fbdefio->delay);
 }
@@ -343,33 +364,47 @@ static void st7735sfb_imageblit(struct fb_info *info,
 {
 	struct fb_deferred_io *fbdefio = info->fbdefio;
 
+	// dev_info(info->dev,
+	// 	"%s: dx=%d, dy=%d, width=%d, height=%d\n",
+	// 	__func__,  image->dx, image->dy, image->width, image->height);
+
 	sys_imageblit(info, image);
 	schedule_delayed_work(&info->deferred_work, fbdefio->delay);
 }
 
-static int display_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
-			u_int transp, struct fb_info *info)
+static unsigned int chan_to_field(unsigned int chan, struct fb_bitfield *bf)
 {
-	u32 *pal = info->pseudo_palette;
-	u32 cr = red >> (16 - info->var.red.length);
-	u32 cg = green >> (16 - info->var.green.length);
-	u32 cb = blue >> (16 - info->var.blue.length);
-	u32 value;
+	chan &= 0xffff;
+	chan >>= 16 - bf->length;
+	return chan << bf->offset;
+}
 
-	if (regno >= 16)
-		return -EINVAL;
+static int st7735sfb_setcolreg(unsigned int regno, unsigned int red,
+			unsigned int green, unsigned int blue,
+			unsigned int transp, struct fb_info *info)
+{
+	unsigned int val;
+	int ret = 1;
 
-	value = (cr << info->var.red.offset) |
-		(cg << info->var.green.offset) |
-		(cb << info->var.blue.offset);
-	if (info->var.transp.length > 0) {
-		u32 mask = (1 << info->var.transp.length) - 1;
-		mask <<= info->var.transp.offset;
-		value |= mask;
+	// dev_info(info->dev,
+	// 	"%s(regno=%u, red=0x%X, green=0x%X, blue=0x%X, trans=0x%X)\n",
+	// 	__func__, regno, red, green, blue, transp);
+
+	switch (info->fix.visual) {
+	case FB_VISUAL_TRUECOLOR:
+		if (regno < 16) {
+			u32 *pal = info->pseudo_palette;
+
+			val  = chan_to_field(red,   &info->var.red);
+			val |= chan_to_field(green, &info->var.green);
+			val |= chan_to_field(blue,  &info->var.blue);
+
+			pal[regno] = val;
+			ret = 0;
+		}
+		break;
 	}
-	pal[regno] = value;
-
-	return 0;
+	return ret;
 }
 
 static struct fb_fix_screeninfo st7735sfb_fix = {
@@ -389,6 +424,9 @@ static struct fb_var_screeninfo st7735sfb_var = {
 	.blue.length = 5,
 	.blue.offset = 0,
 	.bits_per_pixel = 16,
+	.nonstd = 1,
+	.transp.offset = 0,
+	.transp.length = 0
 };
 
 static struct fb_ops st7735sfb_ops = {
@@ -399,7 +437,7 @@ static struct fb_ops st7735sfb_ops = {
 	.fb_fillrect 	= st7735sfb_fillrect,
 	.fb_copyarea 	= st7735sfb_copyarea,
 	.fb_imageblit 	= st7735sfb_imageblit,
-	.fb_setcolreg	= display_setcolreg,
+	.fb_setcolreg	= st7735sfb_setcolreg,
 };
 
 static void st7735sfb_deferred_io(struct fb_info *info,
@@ -489,7 +527,7 @@ static int st7735s_probe(struct spi_device *spi)
 	lcd->spi = spi;
 	lcd->width  = ST7735S_WIDTH;
 	lcd->height = ST7735S_HEIGHT;
-	vmem_size = lcd->width * lcd->height * 2;
+	vmem_size = lcd->width * lcd->height * BPP / 8;
 
 	vmem = vmalloc(vmem_size);
 	if (!vmem) {
@@ -499,6 +537,8 @@ static int st7735s_probe(struct spi_device *spi)
 		devm_kfree(&spi->dev, lcd);
 		return -ENOMEM;
 	}
+
+	mutex_init(&lcd->io_lock);
 
 	st7735sfb_defio = devm_kzalloc(&spi->dev, sizeof(struct fb_deferred_io),
 				GFP_KERNEL);
@@ -517,7 +557,7 @@ static int st7735s_probe(struct spi_device *spi)
 
 	info->fbops = &st7735sfb_ops;
 	info->fix = st7735sfb_fix;
-	info->fix.line_length = lcd->width * 2;
+	info->fix.line_length = lcd->width * BPP / 8;
 
 	info->var = st7735sfb_var;
 	info->var.xres = lcd->width;
@@ -532,7 +572,18 @@ static int st7735s_probe(struct spi_device *spi)
 	info->fix.smem_len = vmem_size;
 	info->flags = FBINFO_FLAG_DEFAULT | FBINFO_VIRTFB;
 	info->par = lcd;
-	info->pseudo_palette = lcd->pseudo_palette;
+	info->pseudo_palette = kmalloc(MAX_PALETTE * sizeof(u32), GFP_KERNEL);
+
+	ret = fb_alloc_cmap(&info->cmap, MAX_PALETTE, 0);
+	if (ret < 0) {
+		kfree(info->pseudo_palette);
+		vfree(vmem);
+		gpiod_put(lcd->gpiod_reset);
+		gpiod_put(lcd->gpiod_a0);
+		devm_kfree(&spi->dev, lcd);
+		return -ENOMEM;
+	}
+	info->cmap.len = MAX_PALETTE;
 
 	fb_deferred_io_init(info);
 
@@ -541,12 +592,28 @@ static int st7735s_probe(struct spi_device *spi)
 
 	dev_set_drvdata(&spi->dev, lcd);
 
+	/* Allocated swapped shadow buffer */
+	lcd->ssbuf = kmalloc(vmem_size, GFP_KERNEL);
+	if (!lcd->ssbuf) {
+		fb_deferred_io_cleanup(info);
+		fb_dealloc_cmap(&info->cmap);
+		kfree(info->pseudo_palette);
+		vfree(vmem);
+		gpiod_put(lcd->gpiod_reset);
+		gpiod_put(lcd->gpiod_a0);
+		devm_kfree(&spi->dev, lcd);
+		return -ENOMEM;
+	}
+
 	// Test load image 128x128
 	st7735s_load_image(lcd, lcd_image);
 	msleep(2000);
 
 	ret = register_framebuffer(info);
 		if (ret) {
+			fb_deferred_io_cleanup(info);
+			fb_dealloc_cmap(&info->cmap);
+			kfree(info->pseudo_palette);
 			vfree(vmem);
 			gpiod_put(lcd->gpiod_reset);
 			gpiod_put(lcd->gpiod_a0);
@@ -562,15 +629,16 @@ static int st7735s_probe(struct spi_device *spi)
 
 static int st7735s_remove(struct spi_device *spi)
 {
-	struct fb_info *info = dev_get_drvdata(&spi->dev);
-	struct st7735s *lcd = info->par;
+	struct st7735s *lcd = dev_get_drvdata(&spi->dev);
 
 	st7735s_write_command(lcd, ST7735S_DISPOFF);
 
-	unregister_framebuffer(info);
-	framebuffer_release(info);
-	fb_deferred_io_cleanup(info);
-	vfree(info->screen_base);
+	unregister_framebuffer(lcd->lcd_info);
+	fb_deferred_io_cleanup(lcd->lcd_info);
+	fb_dealloc_cmap(&lcd->lcd_info->cmap);
+	kfree(lcd->lcd_info->pseudo_palette);
+	vfree(lcd->lcd_info->screen_base);
+	framebuffer_release(lcd->lcd_info);
 
 	gpiod_put(lcd->gpiod_reset);
 	gpiod_put(lcd->gpiod_a0);
