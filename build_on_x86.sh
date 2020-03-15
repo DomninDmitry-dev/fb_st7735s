@@ -25,7 +25,7 @@ while [ ! -z "$1" ] ; do
             --copydtbo)
                 echo "Copy overlay to board"
 		scp ${DTSDIR}/${MODNAME}.dtbo \
-			${ADDR_BOARD}:${DTBDIR}.dtbo
+			${ADDR_BOARD}:${DTBDIR}/${MODNAME}.dtbo
                 ;;
             --copysshid)
                 echo "Copy ssh id to board"
