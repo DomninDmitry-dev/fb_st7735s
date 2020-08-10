@@ -1,14 +1,13 @@
 #!/bin/bash
 
 export MODNAME=st7735s
-export ARCH=arm64
-export CROSS_COMPILE=aarch64-linux-gnu-
-export KERNELDIR=${HOME}/Kernels/orange-pi-zero-plus-5.3.13_x64
-export ADDR_BOARD=root@192.168.0.168
-export MODULEDIR=/lib/modules/5.3.13-sunxi64/kernel/drivers/iio
-export DTSDIR=$PWD/dtsi-zero
-export DTC_FLAGS='--symbols'
-export DTBDIR=/boot/dts/allwinner/overlay/sun50i-h5-${MODNAME}
+export ARCH=arm
+export CROSS_COMPILE=arm-linux-gnueabihf-
+export KERNELDIR=${HOME}/Kernels/orange-pi-one-4.19.103
+export ADDR_BOARD=root@192.168.0.120
+export MODULEDIR=/lib/modules/4.19.103-sunxi/kernel/drivers/iio
+export DTSDIR=$PWD/dtsi-opi-one
+export DTBDIR=/boot/overlay-user
 
 echo -e "\t MODNAME \t = ${MODNAME}"
 echo -e "\t ARCH \t\t = ${ARCH}"

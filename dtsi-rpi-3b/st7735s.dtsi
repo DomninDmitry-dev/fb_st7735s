@@ -1,0 +1,53 @@
+/dts-v1/;
+/plugin/;
+
+/*
+0-input
+1-output
+4-Alternative function
+
+my_pins: my_pins {
+	brcm,pins = <7>; // GPIO7
+	brcm,function = <0>; // Input
+	brcm,pull = <2>; // Pull up
+};
+
+my_pins: my_pins {
+	brcm,pins = <7>; // GPIO7
+	brcm,function = <4>; // Alternative function 0 = SPI0 CE1
+};
+*/
+
+/ {
+	compatible = "brcm,bcm2835", "brcm,bcm2836", "brcm,bcm2708", "brcm,bcm2709";
+
+	fragment@0 {
+		target = <&gpio>;
+		__overlay__ {
+			st7735s_pins: pin_out {
+			brcm,pins = <23 24>;
+			brcm,function = <1 1>; /* Output */
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&spi0>;
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			st: st7735s@0 {
+				compatible = "qd, st7735s";
+				reg = <0x00>;
+				spi-max-frequency = <200000000>;
+				pinctrl-names = "default";
+				pinctrl-0 = <&st7735s_pins>;
+				a0-gpios = <&gpio 24 0>;
+				reset-gpios = <&gpio 23 0>;
+				status = "okay";
+			};
+		};
+	};
+};
