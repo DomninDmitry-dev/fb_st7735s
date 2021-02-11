@@ -3,9 +3,9 @@
 export MODNAME=st7735s
 export ARCH=arm
 export CROSS_COMPILE=/home/dmitry/toolchains/gcc-linaro-7.5.0-2019.12-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
-export KERNELDIR=${HOME}/raspberrypi/kernel-rpi-3b/kernel_v4.19.127
-export ADDR_BOARD=root@192.168.0.151
-export MODULEDIR=/lib/modules/4.19.127-v7+/kernel/drivers/iio
+export KERNELDIR=${HOME}/qt-raspberrypi-3b/kernel-rpi/kernel_v5.4.61
+export ADDR_BOARD=root@10.42.0.91
+export MODULEDIR=/lib/modules/5.4.61-v7+/kernel/drivers/iio
 export DTSDIR=$PWD/dtsi-rpi-3b
 export DTBDIR=/boot/overlays
 

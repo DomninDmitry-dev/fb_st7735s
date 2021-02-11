@@ -1,4 +1,3 @@
-
 ifneq ($(KERNELRELEASE),)
 
 obj-m := ${MODNAME}.o

@@ -5,13 +5,13 @@
 //GIC_PPI = 1
 
 / {
-	compatible = "allwinner,sun50i-a64";
+	compatible = "allwinner,sun50i-h5";
 
 	fragment@0 {
 		target = <&pio>;
 		__overlay__ {
 			st7735s_pins: pin_out {
-			pins = "PA1","PA6";
+			pins = "PA3","PA6";
 			function = "gpio_out";
 			};
 		};
@@ -31,7 +31,7 @@
 				pinctrl-names = "default";
 				pinctrl-0 = <&st7735s_pins>;
 				a0-gpios = <&pio 0 6 0>;
-				reset-gpios = <&pio 0 1 0>;
+				reset-gpios = <&pio 0 3 0>;
 				status = "okay";
 			};
 		};
