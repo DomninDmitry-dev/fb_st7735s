@@ -8,9 +8,13 @@ while [ ! -z "$1" ] ; do
                 make clean
 		rm -f ${DTSDIR}/${MODNAME}.dtbo
                 ;;
-            --module)
+            --mod)
                 echo "Build module"
                 make
+                echo "Add signing key"
+		        ${KERNELDIR}/scripts/sign-file sha512 \
+			        ${KERNELDIR}/certs/signing_key.pem \
+			        ${KERNELDIR}/certs/signing_key.x509 ${MODNAME}.ko
                 ;;
             --dtbo)
                 echo "Compile dtbo"
